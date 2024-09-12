@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>テトリス（改良版爆発ブロック付き）</title>
+        <style>
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background-color: #f0f0f0;
+                font-family: Arial, sans-serif;
+            }
+            #gameBoard {
+                border: 2px solid #333;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="gameBoard" width="1000" height="900"></canvas>
+
+        <script>
+            const canvas = document.getElementById("gameBoard");
+            const ctx = canvas.getContext("2d");
+
+            const ROWS = 30; // 行数を2倍
+            const COLS = 10;
+            const BLOCK_SIZE = 30;
+            const COLORS = [
+                "#FF0000",
+                "#00FF00",
+                "#0000FF",
+                "#FFFF00",
+                "#00FFFF",
+                "#FF00FF",
+                "#FFA500",
+            ];
+            const EXPLODING_COLOR = "#8A2BE2";
+            const LOCK_DELAY = 500;
+            const EXPLODING_CHANCE = 0.05;
+            const EXPLOSION_DURATION = 1000; // 爆発エフェクトの持続時間（ミリ秒）
+
+            let board = Array(ROWS)
+                .fill()
+                .map(() => Array(COLS).fill(0));
+            let currentPiece = null;
+            let lockTimer = null;
+            let bag = [];
+            let isExploding = false;
+
+            const pieces = [
+                [[1, 1, 1, 1]], // I piece
+                [
+                    [1, 1],
+                    [1, 1],
+                ], // O piece
+                [
+                    [1, 1, 1],
+                    [0, 1, 0],
+                ], // T piece
+                [
+                    [1, 1, 1],
+                    [1, 0, 0],
+                ], // L piece
+                [
+                    [1, 1, 1],
+                    [0, 0, 1],
+                ], // J piece
+                [
+                    [1, 1, 0],
+                    [0, 1, 1],
+                ], // S piece
+                [
+                    [0, 1, 1],
+                    [1, 1, 0],
+                ], // Z piece
+            ];
+
+            const explodingPiece = [
+                [1, 0, 0, 1],
+                [0, 1, 1, 0],
+                [0, 1, 1, 0],
+                [1, 0, 0, 1],
+            ];
+
+            function createPiece() {
+                if (bag.length === 0) {
+                    bag = [0, 1, 2, 3, 4, 5, 6];
+                    for (let i = bag.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [bag[i], bag[j]] = [bag[j], bag[i]];
+                    }
+                }
+
+                const isExploding = Math.random() < EXPLODING_CHANCE;
+                if (isExploding) {
+                    return {
+                        shape: explodingPiece,
+                        color: EXPLODING_COLOR,
+                        x: Math.floor(COLS / 2) - 2,
+                        y: 0,
+                        isExploding: true,
+                    };
+                } else {
+                    const pieceIndex = bag.pop();
+                    return {
+                        shape: pieces[pieceIndex],
+                        color: COLORS[pieceIndex],
+                        x:
+                            Math.floor(COLS / 2) -
+                            Math.floor(pieces[pieceIndex][0].length / 2),
+                        y: 0,
+                        isExploding: false,
+                    };
+                }
+            }
+
+            function drawBlock(x, y, color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(
+                    x * BLOCK_SIZE,
+                    y * BLOCK_SIZE,
+                    BLOCK_SIZE,
+                    BLOCK_SIZE,
+                );
+                ctx.strokeStyle = "#000";
+                ctx.strokeRect(
+                    x * BLOCK_SIZE,
+                    y * BLOCK_SIZE,
+                    BLOCK_SIZE,
+                    BLOCK_SIZE,
+                );
+            }
+
+            function drawBoard() {
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        if (board[y][x]) {
+                            drawBlock(x, y, board[y][x]);
+                        }
+                    }
+                }
+            }
+
+            function drawPiece() {
+                currentPiece.shape.forEach((row, y) => {
+                    row.forEach((value, x) => {
+                        if (value) {
+                            drawBlock(
+                                currentPiece.x + x,
+                                currentPiece.y + y,
+                                currentPiece.color,
+                            );
+                        }
+                    });
+                });
+            }
+
+            function collide() {
+                if (currentPiece.isExploding) {
+                    // 爆発ブロックの場合、中央の2x2のみで判定
+                    for (let y = 1; y <= 2; y++) {
+                        for (let x = 1; x <= 2; x++) {
+                            if (
+                                board[y + currentPiece.y] &&
+                                board[y + currentPiece.y][x + currentPiece.x]
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                } else {
+                    return currentPiece.shape.some((row, y) => {
+                        return row.some((value, x) => {
+                            return (
+                                value !== 0 &&
+                                (board[y + currentPiece.y] &&
+                                    board[y + currentPiece.y][
+                                        x + currentPiece.x
+                                    ]) !== 0
+                            );
+                        });
+                    });
+                }
+            }
+
+            function merge() {
+                currentPiece.shape.forEach((row, y) => {
+                    row.forEach((value, x) => {
+                        if (value !== 0) {
+                            board[y + currentPiece.y][x + currentPiece.x] =
+                                currentPiece.color;
+                        }
+                    });
+                });
+            }
+
+            function rotate() {
+                if (currentPiece.isExploding) return; // 爆発ブロックは回転しない
+                const rotated = currentPiece.shape[0].map((_, index) =>
+                    currentPiece.shape.map((row) => row[index]).reverse(),
+                );
+                const previousShape = currentPiece.shape;
+                currentPiece.shape = rotated;
+                if (collide()) {
+                    currentPiece.shape = previousShape;
+                } else {
+                    resetLockTimer();
+                }
+            }
+
+            function clearLines() {
+                let linesCleared = 0;
+                for (let y = ROWS - 1; y >= 0; y--) {
+                    if (board[y].every((value) => value !== 0)) {
+                        board.splice(y, 1);
+                        board.unshift(Array(COLS).fill(0));
+                        linesCleared++;
+                    }
+                }
+                return linesCleared;
+            }
+
+            function explode() {
+                isExploding = true;
+                const explosionRange = 2; // 爆発の範囲（周囲2マス）
+                const centerX = currentPiece.x + 1;
+                const centerY = currentPiece.y + 1;
+
+                function drawExplosionEffect(progress) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    drawBoard();
+
+                    ctx.beginPath();
+                    ctx.arc(
+                        (centerX + 1) * BLOCK_SIZE,
+                        (centerY + 1) * BLOCK_SIZE,
+                        explosionRange * BLOCK_SIZE * progress,
+                        0,
+                        2 * Math.PI,
+                    );
+                    ctx.fillStyle = `rgba(255, 100, 0, ${0.5 * (1 - progress)})`;
+                    ctx.fill();
+
+                    if (progress < 1) {
+                        requestAnimationFrame(() =>
+                            drawExplosionEffect(progress + 0.05),
+                        );
+                    } else {
+                        for (
+                            let y = Math.max(0, centerY - explosionRange);
+                            y <= Math.min(ROWS - 1, centerY + explosionRange);
+                            y++
+                        ) {
+                            for (
+                                let x = Math.max(0, centerX - explosionRange);
+                                x <=
+                                Math.min(COLS - 1, centerX + explosionRange);
+                                x++
+                            ) {
+                                board[y][x] = 0;
+                            }
+                        }
+                        isExploding = false;
+                        clearLines();
+                        currentPiece = createPiece();
+                        if (collide()) {
+                            board = Array(ROWS)
+                                .fill()
+                                .map(() => Array(COLS).fill(0));
+                            alert("ゲームオーバー");
+                        }
+                    }
+                }
+
+                drawExplosionEffect(0);
+            }
+
+            function resetLockTimer() {
+                if (lockTimer) {
+                    clearTimeout(lockTimer);
+                }
+                lockTimer = setTimeout(lockPiece, LOCK_DELAY);
+            }
+
+            function lockPiece() {
+                merge();
+                if (currentPiece.isExploding) {
+                    explode();
+                } else {
+                    clearLines();
+                    currentPiece = createPiece();
+                    if (collide()) {
+                        board = Array(ROWS)
+                            .fill()
+                            .map(() => Array(COLS).fill(0));
+                        alert("ゲームオーバー");
+                    }
+                }
+                lockTimer = null;
+            }
+
+            function update() {
+                if (isExploding) return;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawBoard();
+                drawPiece();
+
+                currentPiece.y++;
+                if (collide()) {
+                    currentPiece.y--;
+                    if (!lockTimer) {
+                        resetLockTimer();
+                    }
+                } else {
+                    if (lockTimer) {
+                        clearTimeout(lockTimer);
+                        lockTimer = null;
+                    }
+                }
+            }
+
+            document.addEventListener("keydown", (event) => {
+                if (isExploding) return;
+
+                switch (event.keyCode) {
+                    case 37: // 左矢印
+                        currentPiece.x--;
+                        if (collide()) {
+                            currentPiece.x++;
+                        } else {
+                            resetLockTimer();
+                        }
+                        break;
+                    case 39: // 右矢印
+                        currentPiece.x++;
+                        if (collide()) {
+                            currentPiece.x--;
+                        } else {
+                            resetLockTimer();
+                        }
+                        break;
+                    case 40: // 下矢印
+                        currentPiece.y++;
+                        if (collide()) {
+                            currentPiece.y--;
+                            resetLockTimer();
+                        }
+                        break;
+                    case 38: // 上矢印
+                    case 87: // Wキー
+                        rotate();
+                        break;
+                }
+            });
+
+            currentPiece = createPiece();
+            setInterval(update, 500);
+        </script>
+    </body>
+</html>
